@@ -6,6 +6,17 @@
 /// 3) вектор векторов стехиометрических коэффициентов реагентов в каждой реакции 
 /// 4) то же для продуктов
 /// В процессе производится избавление от артефактов парсинга уравнений из баз данных
+/// Примечание: 
+/// 1) уравнения реакции содержат последние символы '_dup' или '_DUP' (то есть дублирующие) - эти 
+/// символы удаляются как артефакты парсинга
+/// 2) для работы с эмпирическими реакциями у которых 
+///  код возвращает следующие структуры данных: матрица стехеометрических коэффициентов,
+///  матрица коэффициентов прямых реакций и матрица коэффициентов обратных реакций, матрица степеней концентраций для кинетической функции, G_matrix,
+/// как правило степени концентраций в кинетической функции совпадают со стехеометрическими коэффициентами веществ в реакциии, однако,
+/// для эмпирических реакций они могут и отличаться от стехеометрических коэффициентов.
+///  Предусмотрена вохможность прямого указания этих коэффициентов в уравнениях реакции в виде "степени"
+/// после формулы вещества (например A**0.3 ) такие степени записываются в  G_matrix вместо стехеометрических коэффициентов
+/// в противном случае записывается стехеометрический коэффициент
 /// ----------------------------------------------------------------
 /// eng
 /// The module takes as input a vector of reaction equations specified as a vector of String and produces the following data:
@@ -14,6 +25,16 @@
  /// 3) a vector of vectors of stoichiometric coefficients of reactants in each reaction 
  /// 4) the same for products
 /// The process involves getting rid of artifacts of parsing equations from databases
+/// 
+/// Note: 
+/// 1) reaction equations contain the last characters '_dup' or '_DUP' (that is, duplicate ones) - these 
+/// characters are removed as parsing artifacts
+/// 2) for working with empirical reactions in which  the code returns the following data structures: matrix of stoicheometric coefficients,
+/// matrix of coefficients of direct reactions and matrix of coefficients of reverse reactions, matrix of degrees of concentration for the 
+/// kinetic function, G_matrix. As a rule, the degrees of concentration in the kinetic function coincide with the stoicheometric coefficients of 
+/// the substances in the reaction; however, for empirical reactions they may differ from the stoicheometric coefficients.
+/// It is possible to directly indicate these coefficients in the reaction equations in the form of a “degree” after the formula of a substance 
+/// (for example A**0.3), such degrees are written in G_matrix instead of stoicheometric coefficients otherwise, the stoicheometric coefficient is written
 /// # Examples
 /// reaction data with  artifacts of parsing equations from databases
 /// ```
@@ -42,21 +63,23 @@ use std::collections::HashSet;
 */
 fn clean_off_artifacts( item: &mut String) -> &mut String {
 
-    let items_to_clean = [" (", "(", "M)", "M)"];
-    if item.contains( "M)") || item.contains("M)") || item.contains(" (") || item.contains("(") {
-        *item = item.replace("M)", "").replace("M)", "").replace(" (", "").replace("(", "");
+    let items_to_clean = [" (", "(", "M)", "M)", ">"];
+    if item.contains( "M)") || item.contains("M)") || item.contains(" (") || item.contains("(") || item.contains(">") {
+        *item = item.replace("M)", "").replace("M)", "").replace(" (", "")
+        .replace("(", "").replace(">", "");
         
         return item
     } else {item}
 }
-
+//   half_reaction` - A string representing a half-reaction.
 pub fn analyse_substances(half_reaction: &str) -> (Vec<String>, Vec<f64>, Vec<f64>) {
     let mut s_list = Vec::new();
     let mut g_list = Vec::new();
     let mut subs:Vec<String> = Vec::new();
 
     let re_coeff = Regex::new(r"(\d+(\.\d*)?)\*?").unwrap();
-    let re_power = Regex::new(r"\^\ *(\d+(\.\d*)?)").unwrap();
+    //let re_power = Regex::new(r"\^\ *(\d+(\.\d*)?)").unwrap();
+    let re_power = Regex::new(r"\^(\d+(\.\d*)?)").unwrap();
 
     for s in half_reaction.split('+') {
         let mut s = s.trim();
@@ -69,14 +92,14 @@ pub fn analyse_substances(half_reaction: &str) -> (Vec<String>, Vec<f64>, Vec<f6
             
             // refers to the first capture group in the regular expression match, example: Match { start: 0, end: 1, string: "2" }
             let regmatch = captures.get(0).unwrap();
-            print!(" regmatch:  {:?}   ", regmatch);
+            print!(" regmatch stoichiometric:  {:?}   ", regmatch);
             let start_of_stoichiometric = regmatch.start();
             let end_of_stoichiometric = regmatch.end();
             // стехиометрический коэффициент должен быть перед формулой вещества, т.е. номер его позиции должен начинаться с нуля
             if start_of_stoichiometric==0{
                 s = &s[end_of_stoichiometric..]; 
                 stec_coeff = captures.get(1).unwrap().as_str().parse().unwrap();
-                print!(" stec_coeff:  {}   ", &stec_coeff);
+                print!(" stoichioemtric coeff:  {}   ", &stec_coeff);
             }
             
         
@@ -85,8 +108,14 @@ pub fn analyse_substances(half_reaction: &str) -> (Vec<String>, Vec<f64>, Vec<f6
         
 
         if let Some(captures) = re_power.captures(s) {
+            let regmatch = captures.get(0).unwrap();
+            print!(" regmatch power:  {:?}   ", regmatch);
             power_coeff = captures.get(1).unwrap().as_str().parse().unwrap();
+            print!(" power coeff:  {}   ", & power_coeff);
+            let start = captures.get(0).unwrap().start();
             let end = captures.get(0).unwrap().end();
+           // println!("start: {} end: {}", start, end);
+           s = &s[..start];
       
         }
         else{
@@ -234,28 +263,50 @@ impl ReactionAnalyzer {
     }
 
     pub fn search_substances(&mut self) {
+
         let reactions_trimmed = self.reactions.iter().map(|s| s.replace("**", "^").trim().to_string()).collect();
         self.reactions = reactions_trimmed;
         let mut found_substances:Vec<String> = Vec::new();
-        for mut reaction in &mut self.reactions {
-            println!("Reaction: {}", reaction);
-          //  let mut reaction: &mut String = &mut reaction.to_string();
-            let reaction = clean_off_DUP(reaction);
-            let re = Regex::new(r"=|->|=>").unwrap();
-            let sides: Vec<&str> = re.split(reaction).map(|s| s).collect();  
-            println!("Sides: {:?}", &sides);
-            for side in sides {
-              let (subs, _, _) = analyse_substances( &side); 
-              let subs_mut = &mut subs.clone();
-              subs_mut.retain(|s|!found_substances.contains(s));  // remove duplicates
-              found_substances.extend(subs_mut.to_owned());
-        }
-        self.substances = found_substances.iter().map(|s| s.to_string()).collect();
-        println!("Substances found: {:?}", &self.substances);
+        for mut reaction in &self.reactions {
+            // номер реакции
+            if let Some(i) = self.reactions.iter().position(|s| s == reaction){
+            println!("reaction number: {}", i);
+            let mut reaction_: &mut String = &mut reaction.to_string();
+            reaction = clean_off_DUP( reaction_);
+            println!("Reaction after dup: {}", &reaction);
+            // разделяем уравнение реакции на половины относящиеся к реагентам и продуктам по соответствующему знаку = или -> или =>
+           // let re = Regex::new(r"=|->|=>").unwrap();
+            let re = Regex::new(r"=|->|=>|<=>").unwrap();
+            let sides: Vec<String> = re.split(reaction)// reaction.split(|s| s == '=' ) 
+            .map(|s| s.trim())
+            .map(|s| s.to_string())
+            .collect();
+            let mut subs = Vec::new(); 
+            println!("direct reaction  {:?}", &sides[0]);
+            let (mut left_subs, _, _) = analyse_substances( &sides[0]);
+            let mut left_subs = left_subs.iter().map(|s| s.as_str()).collect();
+            subs.append(&mut left_subs);
+            println!("direct reaction substances: {:?}", &left_subs);
 
-    }
+
+            println!("reverse reaction {:?}", &sides[1]);
+            let (mut right_subs, _, _) = analyse_substances( &sides[1]);
+            let mut right_subs = right_subs.iter().map(|s| s.as_str()).collect();
+            subs.append(&mut right_subs);
+            println!("reverse  reaction substances: {:?}", &left_subs);
+            let subs_mut = &mut subs.clone();
+            subs_mut.retain(|s|!found_substances.contains(&s.to_string()));  // remove duplicates
+            found_substances.extend(subs_mut.iter().map(|s| s.to_string()).collect::<Vec<_>>()); 
+            
+
+        } // end of if let
+    } // end of for reaction in &self.reactions {
+
+    self.substances = found_substances;
+    
 }
 }   // end of impl ReactionAnalyzer
+
 
 
 #[cfg(test)]
@@ -266,19 +317,19 @@ mod tests {
     fn test_analyse_substances() {
         let half_reaction = "5H2O + 10O2";
         let (subs, s_list, g_list) = analyse_substances(half_reaction);
-        assert_eq!(subs, vec!["5H2O".to_string(), "10O2".to_string()]);
+        assert_eq!(subs, vec!["H2O".to_string(), "O2".to_string()]);
         assert_eq!(s_list, vec![5.0, 10.0]);
         assert_eq!(g_list, vec![1.0, 1.0]);
     }
 
     #[test]
-    fn test_clean_off_artifacts() {
+    fn test_clean_off_artifacts_and_DUP() {
         let mut item = "A=2BM)".to_string();
         let cleaned_item = clean_off_artifacts(&mut item);
         assert_eq!(cleaned_item, "A=2B");
 
         let mut item = "B->A + 3C_DUP".to_string();
-        let cleaned_item = clean_off_artifacts(&mut item);
+        let cleaned_item = clean_off_DUP(&mut item);
         assert_eq!(cleaned_item, "B->A + 3C");
     }
 
@@ -291,4 +342,24 @@ mod tests {
         ReactionAnalyzer_instance.search_substances();
         assert_eq!(ReactionAnalyzer_instance.substances, vec!["A".to_string(), "B".to_string(), "C".to_string()]);
     }
+    #[test]
+    fn test_reaction_analyzer() {
+        let mut ReactionAnalyzer_instance = ReactionAnalyzer::new();
+        let reactions_: Vec<&str> = vec!["A=2BM)", "B=>A + 3C_DUP", "2B+A=D**0.5"];
+        let reaction = reactions_.iter().map(|s| s.to_string()).collect();
+        ReactionAnalyzer_instance.reactions = reaction;
+       // ReactionAnalyzer_instance.search_substances();
+        // assert_eq!(ReactionAnalyzer_instance.substances, vec!["A".to_string(), "B".to_string(), "C".to_string()]);
+        let substancses_ = vec!["A", "B", "C", "D"];
+        let substancses = substancses_.iter().map(|s| s.to_string()).collect();
+        ReactionAnalyzer_instance.substances = substancses ;
+        ReactionAnalyzer_instance.analyse_reactions();
+        let stecheo_matrx = ReactionAnalyzer_instance.stecheo_matrx;
+        let result =  [[-1.0, 2.0, 0.0, 0.0], [1.0, -1.0, 3.0, 0.0], [-1.0, -2.0, 0.0, 1.0]];
+        let result: Vec<Vec<f64>> = result.iter().map(|row| row.to_vec()).collect();
+        assert_eq!(stecheo_matrx, result);
+
+
+    }
 }
+
